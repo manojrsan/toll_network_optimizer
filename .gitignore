@@ -1,0 +1,11 @@
+PUSH_NOTES.md
+CLAUDE.md
+HANDOFF.md
+venv/
+data/*.graphml
+data/*.csv
+data/*.png
+data/*.json
+__pycache__/
+*.pyc
+.DS_Store
