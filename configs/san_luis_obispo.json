@@ -1,0 +1,12 @@
+{
+  "city_name": "San Luis Obispo, California, USA",
+  "n_zones": 8,
+  "k_paths": 15,
+  "kappa": 8,
+  "P_l": 1,
+  "P_u": 5,
+  "n_breakpoints": 6,
+  "demand_default": 5000,
+  "solver_time_limit": 300,
+  "solver": "highs"
+}
