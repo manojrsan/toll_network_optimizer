@@ -25,8 +25,8 @@ def plot_city_tolls(subG: nx.DiGraph, zone_nodes: list, solution: dict,
         ax.add_collection(LineCollection(normal_segs, colors="#cccccc",
                                          linewidths=0.6, zorder=1, rasterized=True))
 
-    # Tolled edges colored by toll price using plasma (purple → yellow)
-    toll_cmap = cm.get_cmap("plasma")
+    # Tolled edges colored by toll price: PuRd (light purple → dark red)
+    toll_cmap = cm.get_cmap("PuRd")
     norm = mcolors.Normalize(vmin=P_l, vmax=P_u)
     for u, v in subG.edges():
         if (u, v) in tolled_set and u in pos and v in pos:
@@ -34,7 +34,7 @@ def plot_city_tolls(subG: nx.DiGraph, zone_nodes: list, solution: dict,
             color = toll_cmap(norm(max(float(toll), float(P_l))))
             ax.add_collection(LineCollection(
                 [[(pos[u][0], pos[u][1]), (pos[v][0], pos[v][1])]],
-                colors=[color], linewidths=3.0, zorder=3
+                colors=[color], linewidths=0.6, zorder=3
             ))
 
     # Zone centroid nodes
@@ -54,7 +54,7 @@ def plot_city_tolls(subG: nx.DiGraph, zone_nodes: list, solution: dict,
     ax.set_title(f"Toll Placement — {city_name} (κ={kappa_val})", fontsize=13, pad=12)
 
     # Colorbar: toll price scale
-    sm = cm.ScalarMappable(cmap="plasma", norm=mcolors.Normalize(vmin=P_l, vmax=P_u))
+    sm = cm.ScalarMappable(cmap=toll_cmap, norm=mcolors.Normalize(vmin=P_l, vmax=P_u))
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, shrink=0.35, pad=0.02, aspect=15)
     cbar.set_label("Toll price ($)", fontsize=9)
