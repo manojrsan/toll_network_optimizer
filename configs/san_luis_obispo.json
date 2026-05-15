@@ -4,9 +4,9 @@
   "k_paths": 15,
   "kappa": 8,
   "P_l": 1,
-  "P_u": 5,
+  "P_u": 8,
   "n_breakpoints": 6,
   "demand_default": 5000,
-  "solver_time_limit": 300,
+  "solver_time_limit": 3600,
   "solver": "highs"
 }
