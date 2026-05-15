@@ -2,6 +2,61 @@ import os
 import networkx as nx
 import osmnx as ox
 
+# Realistic free-flow speeds by highway type (mph).
+# These reflect typical observed travel speeds, not posted limits.
+_SPEED_MPH = {
+    "motorway":      72.0,   # US-101: posted 65, people drive 70-75
+    "motorway_link": 45.0,
+    "trunk":         55.0,   # state routes (SR-1)
+    "trunk_link":    35.0,
+    "primary":       40.0,   # Foothill Blvd, Los Osos Valley Rd
+    "secondary":     35.0,   # Broad St, South St
+    "tertiary":      30.0,   # local arterials
+    "unclassified":  25.0,
+    "residential":   22.0,
+    "service":       12.0,   # parking aisles, alleys
+}
+_SPEED_DEFAULT_MPH = 25.0
+
+# When a maxspeed tag exists, scale it by this factor.
+# Freeways: drivers exceed the limit; residential: slightly under.
+_COMPLIANCE = {
+    "motorway":      1.10,
+    "motorway_link": 1.05,
+    "trunk":         1.05,
+    "trunk_link":    1.00,
+    "primary":       1.00,
+    "secondary":     0.95,
+    "tertiary":      0.90,
+    "unclassified":  0.90,
+    "residential":   0.85,
+    "service":       0.80,
+}
+
+# Realistic capacity per lane (vph) by highway type.
+_CAPACITY_PER_LANE = {
+    "motorway":      2200,
+    "motorway_link": 1800,
+    "trunk":         1900,
+    "trunk_link":    1600,
+    "primary":       1700,
+    "secondary":     1600,
+    "tertiary":      1400,
+    "unclassified":  1200,
+    "residential":    800,
+    "service":        600,
+}
+_CAPACITY_DEFAULT = 1000
+
+# Default lane count when OSM has no lanes tag.
+_DEFAULT_LANES = {
+    "motorway": 2, "motorway_link": 1,
+    "trunk": 2,    "trunk_link": 1,
+    "primary": 2,  "secondary": 2,
+    "tertiary": 1, "unclassified": 1,
+    "residential": 1, "service": 1,
+}
+
 
 def download_city_network(city_name: str, cache_dir: str) -> nx.DiGraph:
     city_slug = city_name.replace(",", "").replace(" ", "_").lower()[:30]
@@ -12,7 +67,6 @@ def download_city_network(city_name: str, cache_dir: str) -> nx.DiGraph:
             print(f"Loading cached network from {cache_path}")
             H = nx.read_graphml(cache_path)
             H = nx.relabel_nodes(H, {n: int(n) for n in H.nodes()})
-            # restore numeric edge attributes that graphml reads back as strings
             for u, v, data in H.edges(data=True):
                 for key in ("length", "t_free", "capacity"):
                     if key in data:
@@ -31,11 +85,8 @@ def download_city_network(city_name: str, cache_dir: str) -> nx.DiGraph:
     print(f"Downloading network for {city_name}...")
     G = ox.graph_from_place(city_name, network_type="drive", simplify=True)
 
-    # collapse MultiDiGraph → simple DiGraph using osmnx's built-in converter
-    # (keeps the minimum-length edge for each parallel pair)
     H = ox.convert.to_digraph(G, weight="length")
 
-    # strip geometry objects and non-essential attributes from edges
     keep_keys = {"length", "highway", "lanes", "maxspeed", "capacity"}
     for u, v, data in H.edges(data=True):
         for k in list(data.keys()):
@@ -44,7 +95,6 @@ def download_city_network(city_name: str, cache_dir: str) -> nx.DiGraph:
             else:
                 data[k] = _safe_attr(data[k])
 
-    # strip geometry from nodes
     for _, data in H.nodes(data=True):
         data.pop("geometry", None)
         for k, v in list(data.items()):
@@ -53,7 +103,6 @@ def download_city_network(city_name: str, cache_dir: str) -> nx.DiGraph:
     _annotate_edges(H)
 
     os.makedirs(cache_dir, exist_ok=True)
-    # sanitize for graphml before writing
     _sanitize_for_graphml(H)
     nx.write_graphml(H, cache_path)
     print(f"Cached network to {cache_path}")
@@ -62,7 +111,6 @@ def download_city_network(city_name: str, cache_dir: str) -> nx.DiGraph:
 
 
 def _safe_attr(v):
-    """Convert a value to a graphml-safe scalar."""
     if isinstance(v, list):
         return str(v[0]) if v else ""
     if v is None:
@@ -71,7 +119,6 @@ def _safe_attr(v):
 
 
 def _sanitize_for_graphml(G: nx.DiGraph):
-    """Ensure all node/edge attributes are graphml-compatible scalars."""
     for _, data in G.nodes(data=True):
         for k, v in list(data.items()):
             if isinstance(v, (list, tuple)):
@@ -93,23 +140,29 @@ def _annotate_edges(G: nx.DiGraph):
         hwy = data.get("highway", "")
         if isinstance(hwy, list):
             hwy = hwy[0]
-        data["highway"] = str(hwy).lower()
+        hwy = str(hwy).lower()
+        data["highway"] = hwy
 
-        # parse maxspeed → m/s
-        speed_mps = 9.72  # fallback: 35 km/h
-        if "maxspeed" in data and data["maxspeed"] not in ("", None):
-            s = data["maxspeed"]
-            if isinstance(s, (list, tuple)):
-                s = s[0]
-            s = str(s)
+        # --- realistic free-flow speed ---
+        # If OSM has a maxspeed tag, scale it by a per-type compliance factor
+        # (drivers exceed limits on freeways, go slightly under on residential).
+        # If no tag, use the type-based table directly.
+        parsed_mph = None
+        ms = data.get("maxspeed", "")
+        if ms not in ("", None):
+            raw = str(ms)
             try:
-                num = float(s.split()[0])
-                if "mph" in s.lower():
-                    speed_mps = num * 0.44704
-                else:
-                    speed_mps = num / 3.6
+                num = float(raw.split()[0])
+                parsed_mph = num if "mph" in raw.lower() else num * 0.621371
             except (ValueError, IndexError):
                 pass
+
+        if parsed_mph is not None:
+            speed_mph = parsed_mph * _COMPLIANCE.get(hwy, 1.0)
+        else:
+            speed_mph = _SPEED_MPH.get(hwy, _SPEED_DEFAULT_MPH)
+
+        speed_mps = speed_mph * 0.44704
 
         length = data.get("length", 0)
         try:
@@ -131,7 +184,7 @@ def _annotate_edges(G: nx.DiGraph):
 
 def _lanes_capacity(data: dict) -> float:
     hwy = str(data.get("highway", "")).lower()
-    per_lane = 2000.0 if hwy in ("motorway", "trunk") else 1800.0
+    per_lane = _CAPACITY_PER_LANE.get(hwy, _CAPACITY_DEFAULT)
 
     lanes_raw = data.get("lanes")
     if lanes_raw not in (None, ""):
@@ -142,4 +195,5 @@ def _lanes_capacity(data: dict) -> float:
         except (ValueError, AttributeError):
             pass
 
-    return 1000.0
+    lanes = _DEFAULT_LANES.get(hwy, 1)
+    return per_lane * lanes
